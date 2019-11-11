@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 '''
     RHOASo
 	Copyright (C) 2018 Ángel Luis Muñoz Castañeda, David Escudero García,
@@ -135,6 +137,7 @@ def get_shifts(n_dims, n=1):
     '''
     shift_elements = [0, n]
     shifts = itertools.product(shift_elements, repeat=n_dims)
+    next(shifts)   # Remove the all-zero shift which will go first
     return shifts
 
 
@@ -285,7 +288,7 @@ def get_value(ac, current_point, new_point, option1):
     return value
 
 
-def compute_stb(ac, current_point, vals, option1, option2):
+def compute_stb(ac, current_point, vals, option1, option2, exponent=1):
     '''
     Computes the stabilizer value of a point given the computed list of values.
 
@@ -314,7 +317,7 @@ def compute_stb(ac, current_point, vals, option1, option2):
     if option1 == 1:
         tot = product(vals)
     if option2 == 0:
-        stb = tot * ac[current_point] * max(current_point)
+        stb = tot * ac[current_point] * (max(current_point) ** exponent)
     if option2 == 1:
         stb = tot * max(current_point) + ac[current_point]
     return stb
@@ -354,7 +357,7 @@ def check_accuracy(point, ac, target_model, data, labels, params_lengths):
 
 
 def get_stb(target_model, current_point, ac, data, labels, option1, option2,
-            params_lengths, params_max_values, random):
+            params_lengths, params_max_values, random, exponent):
     '''
     Computes the stabilizer value for a single point
 
@@ -397,12 +400,13 @@ def get_stb(target_model, current_point, ac, data, labels, option1, option2,
         value = get_value(ac, current_point, new_point, option1)
         vals.append(value)
 
-    stb = compute_stb(ac, current_point, vals, option1, option2)
+    stb = compute_stb(ac, current_point, vals, option1, option2, exponent)
     return stb
 
 
 def get_best_neighbour(target_model, current_point, ac, data, labels, option1,
-                       option2, params_lengths, params_max_values, random):
+                       option2, params_lengths, params_max_values, random,
+                       exponent):
     '''
     Computes the best neighbor following the criteria of the stabilizer
 
@@ -442,8 +446,9 @@ def get_best_neighbour(target_model, current_point, ac, data, labels, option1,
     for new_point in points:
         check_accuracy(new_point, ac, target_model, data, labels,
                        params_lengths)
-        stb = get_stb(target_model, current_point, ac, data, labels, option1,
-                      option2, params_lengths, params_max_values, random)
+        stb = get_stb(target_model, new_point, ac, data, labels, option1,
+                      option2, params_lengths, params_max_values, random,
+                      exponent)
         stbs[new_point] = stb
 
     maximum = max(stbs.items(), key=lambda x: x[-1])
@@ -556,7 +561,7 @@ def extract_max_params_values(max_pars):
 
 
 def selection_n(target_model, data, labels, max_pars, n=2, option1=0,
-                option2=0, random=False):
+                option2=0, random=False, exponent=1, fraction=1.0):
     '''
     Optimizes hyperparameters.
 
@@ -599,7 +604,9 @@ def selection_n(target_model, data, labels, max_pars, n=2, option1=0,
             len(computed)
     '''
     ac = {}
-
+    if fraction < 1.0:
+        data, _, labels, _ = sklearn.model_selection.train_test_split(
+                                         data, labels, train_fraction=fraction)
     params_lengths = extract_params_lengths(max_pars)
     params_max_values = extract_max_params_values(max_pars)
 
@@ -609,10 +616,11 @@ def selection_n(target_model, data, labels, max_pars, n=2, option1=0,
         check_accuracy(current_point, ac, target_model, data, labels,
                        params_lengths)
         stb = get_stb(target_model, current_point, ac, data, labels, option1,
-                      option2, params_lengths, params_max_values, random)
+                      option2, params_lengths, params_max_values, random,
+                      exponent)
         neighbour_point, neighbour_stb = get_best_neighbour(
                 target_model, current_point, ac, data, labels, option1,
-                option2, params_lengths, params_max_values, random
+                option2, params_lengths, params_max_values, random, exponent
         )
         if neighbour_stb > stb:
             current_point = neighbour_point
@@ -622,6 +630,23 @@ def selection_n(target_model, data, labels, max_pars, n=2, option1=0,
             target_model, current_point, ac, data, labels, params_lengths,
             params_max_values, random, n=n
     )
+    if accuracy < ac[current_point]:
+        final_point = current_point
+        accuracy = ac[current_point]
     num_evals = len(ac)
     return (process_hyperparameters(final_point, params_lengths), accuracy, ac,
             num_evals)
+
+if __name__ == '__main__':
+    import pandas as pd
+    import numpy as np
+    import sklearn.ensemble
+    
+    df = pd.read_csv('robots.csv', header=None, sep=',')
+    data = df[df.columns[:-1]].values
+    labels = df[df.columns[-1]].values
+    target_model = sklearn.ensemble.RandomForestClassifier
+    max_pars = {'max_depth': 50, 'n_estimators': 50}
+    params, acc, ac, num_evals = selection_n(
+            target_model, data, labels, max_pars, n=2, option1=0, option2=0,
+            random=False, exponent=50, fraction=1.0)
